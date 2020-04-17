@@ -191,97 +191,96 @@ def ip_stats(ips):
     return "%6d %6d %6d" % (hist["ipv4"], hist["ipv6"], hist["onion"])
 
 
-class IpStats:
-    def __init__(self, message):
-        self.hist = collections.defaultdict(int)
-        self.message = message
-
-    def process(self, ip):
-        if ip is not None:
-            hist[ip["net"]] += 1
-
-    def print_stats(self):
-        stats = "%6d %6d %6d" % (hist["ipv4"], hist["ipv6"], hist["onion"])
-        full_message = "%s " + self.message % stats
-        print(full_message, file=sys.stderr)
+def print_ip_stats(ips, message):
+    if not message:
+        return
+    stats = ip_stats(ips)
+    full_message = ("%s " + self.message) % stats
+    print(full_message, file=sys.stderr)
 
 
-def main():
+def filter_invalid_address(ips):
+    """ Skip entries with invalid address. """
+    return [ip for ip in ips if ip is not None]
 
-    filter_funcs = [
-        # filter function, stats counter
-        # (None, IpStats("Initial")),
-        (filter_invalid_address, IpStats("Skip entries with invalid address")),
-        (filter_duplicate, IpStats("After removing duplicates")),
-        (filter_suspicious_host, IpStats("Skip entries from suspicious hosts")),
-        (enforce_min_blocks, IpStats("Enforce minimal number of blocks")),
-        (require_service_bit_1, IpStats("Require service bit 1")),
-        (require_min_uptime, IpStats("Require minimum uptime")),
-        (
-            require_known_recent_user_agent,
-            IpStats("Require a known and recent user agent"),
-        ),
-        (
-            filter_multiple_ports,
-            IpStats("Filter out hosts with multiple bitcoin ports"),
-        ),
-        (
-            limit_per_asn_and_net,
-            IpStats("Look up ASNs and limit results per ASN and per net"),
-        ),
-    ]
-    filter_to_stats = {func: stats for func, stats in filter_funcs}
 
-    print(
-        "\x1b[7m  IPv4   IPv6  Onion Pass                                               \x1b[0m",
-        file=sys.stderr,
-    )
-    for line in sys.stdin.readlines():
-        ip = parseline(line)
-        for func, stats in filter_funcs:
-            ip = func(ip)
-            stats.process(ip)
+def filter_duplicate(ips):
+    """ Skip duplicates (in case multiple seeds files were concatenated) """
+    return dedup(ips)
 
-    # Skip entries with invalid address.
-    ips = [ip for ip in ips if ip is not None]
-    print("%s Skip entries with invalid address" % (ip_stats(ips)), file=sys.stderr)
-    # Skip duplicates (in case multiple seeds files were concatenated)
-    ips = dedup(ips)
-    print("%s After removing duplicates" % (ip_stats(ips)), file=sys.stderr)
-    # Skip entries from suspicious hosts.
-    ips = [ip for ip in ips if ip["ip"] not in SUSPICIOUS_HOSTS]
-    print("%s Skip entries from suspicious hosts" % (ip_stats(ips)), file=sys.stderr)
-    # Enforce minimal number of blocks.
-    ips = [ip for ip in ips if ip["blocks"] >= MIN_BLOCKS]
-    print("%s Enforce minimal number of blocks" % (ip_stats(ips)), file=sys.stderr)
-    # Require service bit 1.
-    ips = [ip for ip in ips if (ip["service"] & 1) == 1]
-    print("%s Require service bit 1" % (ip_stats(ips)), file=sys.stderr)
-    # Require at least 50% 30-day uptime for clearnet, 10% for onion.
+
+def filter_suspicious_host(ips):
+    """ Skip entries from suspicious hosts. """
+    return [ip for ip in ips if ip["ip"] not in SUSPICIOUS_HOSTS]
+
+
+def enforce_min_blocks(ips):
+    """ Enforce minimal number of blocks. """
+    return [ip for ip in ips if ip["blocks"] >= MIN_BLOCKS]
+
+
+def require_service_bit_1(ips):
+    """ Require service bit 1. """
+    return [ip for ip in ips if (ip["service"] & 1) == 1]
+
+
+def require_min_uptime(ips):
+    """ Require at least 50% 30-day uptime for clearnet, 10% for onion. """
     req_uptime = {
         "ipv4": 50,
         "ipv6": 50,
         "onion": 10,
     }
-    ips = [ip for ip in ips if ip["uptime"] > req_uptime[ip["net"]]]
-    print("%s Require minimum uptime" % (ip_stats(ips)), file=sys.stderr)
-    # Require a known and recent user agent.
-    ips = [ip for ip in ips if PATTERN_AGENT.match(ip["agent"])]
-    print("%s Require a known and recent user agent" % (ip_stats(ips)), file=sys.stderr)
-    # Sort by availability (and use last success as tie breaker)
-    ips.sort(key=lambda x: (x["uptime"], x["lastsuccess"], x["ip"]), reverse=True)
-    # Filter out hosts with multiple bitcoin ports, these are likely abusive
-    ips = filtermultiport(ips)
+    return [ip for ip in ips if ip["uptime"] > req_uptime[ip["net"]]]
+
+
+def require_known_recent_user_agent(ips):
+    """ Require a known and recent user agent. """
+    return [ip for ip in ips if PATTERN_AGENT.match(ip["agent"])]
+
+
+def sort_by_availability(ips):
+    """ Sort by availability (and use last success as tie breaker) """
+    return sorted(
+        ips, key=lambda x: (x["uptime"], x["lastsuccess"], x["ip"]), reverse=True
+    )
+
+
+def filter_multiple_ports(ips):
+    """ Filter out hosts with multiple bitcoin ports, these are likely abusive """
+    return filtermultiport(ips)
+
+
+def limit_per_asn_and_net(ips):
+    """ Look up ASNs and limit results, both per ASN and globally. """
+    return filterbyasn(ips, MAX_SEEDS_PER_ASN, NSEEDS)
+
+
+def main():
+
+    filter_funcs = [
+        # filter function, message
+        (filter_invalid_address, "Skip entries with invalid address"),
+        (filter_duplicate, "After removing duplicates"),
+        (filter_suspicious_host, "Skip entries from suspicious hosts"),
+        (enforce_min_blocks, "Enforce minimal number of blocks"),
+        (require_service_bit_1, "Require service bit 1"),
+        (require_min_uptime, "Require minimum uptime"),
+        (require_known_recent_user_agent, "Require a known and recent user agent",),
+        (sort_by_availability, ""),
+        (filter_multiple_ports, "Filter out hosts with multiple bitcoin ports",),
+        (limit_per_asn_and_net, "Look up ASNs and limit results per ASN and per net",),
+    ]
+
     print(
-        "%s Filter out hosts with multiple bitcoin ports" % (ip_stats(ips)),
+        "\x1b[7m  IPv4   IPv6  Onion Pass                                               \x1b[0m",
         file=sys.stderr,
     )
-    # Look up ASNs and limit results, both per ASN and globally.
-    ips = filterbyasn(ips, MAX_SEEDS_PER_ASN, NSEEDS)
-    print(
-        "%s Look up ASNs and limit results per ASN and per net" % (ip_stats(ips)),
-        file=sys.stderr,
-    )
+    ips = [parseline(line) for line in sys.stdin]
+    for func, message in filter_funcs:
+        ips = func(ips)
+        print_ip_stats(ips, message)
+
     # Sort the results by IP address (for deterministic output).
     ips.sort(key=lambda x: (x["net"], x["sortkey"]))
     for ip in ips:
