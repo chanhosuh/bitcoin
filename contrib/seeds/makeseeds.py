@@ -107,81 +107,6 @@ def parseline(line):
     }
 
 
-def dedup(ips):
-    """deduplicate by address,port"""
-    d = {}
-    for ip in ips:
-        d[ip["ip"], ip["port"]] = ip
-    return list(d.values())
-
-
-def filtermultiport(ips):
-    """Filter out hosts with more nodes per IP"""
-    hist = collections.defaultdict(list)
-    for ip in ips:
-        hist[ip["sortkey"]].append(ip)
-    return [value[0] for (key, value) in list(hist.items()) if len(value) == 1]
-
-
-def lookup_asn(net, ip):
-    """
-    Look up the asn for an IP (4 or 6) address by querying cymru.com, or None
-    if it could not be found.
-    """
-    try:
-        if net == "ipv4":
-            ipaddr = ip
-            prefix = ".origin"
-        else:  # http://www.team-cymru.com/IP-ASN-mapping.html
-            res = str()  # 2001:4860:b002:23::68
-            for nb in ip.split(":")[:4]:  # pick the first 4 nibbles
-                for c in nb.zfill(4):  # right padded with '0'
-                    res += c + "."  # 2001 4860 b002 0023
-            ipaddr = res.rstrip(".")  # 2.0.0.1.4.8.6.0.b.0.0.2.0.0.2.3
-            prefix = ".origin6"
-
-        asn = int(
-            [
-                x.to_text()
-                for x in dns.resolver.query(
-                    ".".join(reversed(ipaddr.split("."))) + prefix + ".asn.cymru.com",
-                    "TXT",
-                ).response.answer
-            ][0]
-            .split('"')[1]
-            .split(" ")[0]
-        )
-        return asn
-    except Exception:
-        sys.stderr.write('ERR: Could not resolve ASN for "' + ip + '"\n')
-        return None
-
-
-# Based on Greg Maxwell's seed_filter.py
-def filterbyasn(ips, max_per_asn, max_per_net):
-    # Sift out ips by type
-    ips_ipv46 = [ip for ip in ips if ip["net"] in ["ipv4", "ipv6"]]
-    ips_onion = [ip for ip in ips if ip["net"] == "onion"]
-
-    # Filter IPv46 by ASN, and limit to max_per_net per network
-    result = []
-    net_count = collections.defaultdict(int)
-    asn_count = collections.defaultdict(int)
-    for ip in ips_ipv46:
-        if net_count[ip["net"]] == max_per_net:
-            continue
-        asn = lookup_asn(ip["net"], ip["ip"])
-        if asn is None or asn_count[asn] == max_per_asn:
-            continue
-        asn_count[asn] += 1
-        net_count[ip["net"]] += 1
-        result.append(ip)
-
-    # Add back Onions (up to max_per_net)
-    result.extend(ips_onion[0:max_per_net])
-    return result
-
-
 def ip_stats(ips):
     hist = collections.defaultdict(int)
     for ip in ips:
@@ -195,7 +120,7 @@ def print_ip_stats(ips, message):
     if not message:
         return
     stats = ip_stats(ips)
-    full_message = ("%s " + self.message) % stats
+    full_message = ("%s " + message) % stats
     print(full_message, file=sys.stderr)
 
 
@@ -205,8 +130,14 @@ def filter_invalid_address(ips):
 
 
 def filter_duplicate(ips):
-    """ Skip duplicates (in case multiple seeds files were concatenated) """
-    return dedup(ips)
+    """
+    Skip duplicates (in case multiple seeds files were concatenated).
+    Deduplicate by address, port.
+    """
+    d = {}
+    for ip in ips:
+        d[ip["ip"], ip["port"]] = ip
+    return list(d.values())
 
 
 def filter_suspicious_host(ips):
@@ -248,12 +179,74 @@ def sort_by_availability(ips):
 
 def filter_multiple_ports(ips):
     """ Filter out hosts with multiple bitcoin ports, these are likely abusive """
-    return filtermultiport(ips)
+    hist = collections.defaultdict(list)
+    for ip in ips:
+        hist[ip["sortkey"]].append(ip)
+    return [value[0] for (key, value) in list(hist.items()) if len(value) == 1]
 
 
 def limit_per_asn_and_net(ips):
     """ Look up ASNs and limit results, both per ASN and globally. """
     return filterbyasn(ips, MAX_SEEDS_PER_ASN, NSEEDS)
+
+
+# Based on Greg Maxwell's seed_filter.py
+def filterbyasn(ips, max_per_asn, max_per_net):
+    # Sift out ips by type
+    ips_ipv46 = [ip for ip in ips if ip["net"] in ["ipv4", "ipv6"]]
+    ips_onion = [ip for ip in ips if ip["net"] == "onion"]
+
+    # Filter IPv46 by ASN, and limit to max_per_net per network
+    result = []
+    net_count = collections.defaultdict(int)
+    asn_count = collections.defaultdict(int)
+    for ip in ips_ipv46:
+        if net_count[ip["net"]] == max_per_net:
+            continue
+        asn = lookup_asn(ip["net"], ip["ip"])
+        if asn is None or asn_count[asn] == max_per_asn:
+            continue
+        asn_count[asn] += 1
+        net_count[ip["net"]] += 1
+        result.append(ip)
+
+    # Add back Onions (up to max_per_net)
+    result.extend(ips_onion[0:max_per_net])
+    return result
+
+
+def lookup_asn(net, ip):
+    """
+    Look up the asn for an IP (4 or 6) address by querying cymru.com, or None
+    if it could not be found.
+    """
+    try:
+        if net == "ipv4":
+            ipaddr = ip
+            prefix = ".origin"
+        else:  # http://www.team-cymru.com/IP-ASN-mapping.html
+            res = str()  # 2001:4860:b002:23::68
+            for nb in ip.split(":")[:4]:  # pick the first 4 nibbles
+                for c in nb.zfill(4):  # right padded with '0'
+                    res += c + "."  # 2001 4860 b002 0023
+            ipaddr = res.rstrip(".")  # 2.0.0.1.4.8.6.0.b.0.0.2.0.0.2.3
+            prefix = ".origin6"
+
+        asn = int(
+            [
+                x.to_text()
+                for x in dns.resolver.query(
+                    ".".join(reversed(ipaddr.split("."))) + prefix + ".asn.cymru.com",
+                    "TXT",
+                ).response.answer
+            ][0]
+            .split('"')[1]
+            .split(" ")[0]
+        )
+        return asn
+    except Exception:
+        sys.stderr.write('ERR: Could not resolve ASN for "' + ip + '"\n')
+        return None
 
 
 def main():
