@@ -120,7 +120,7 @@ def print_ip_stats(ips, message):
     if not message:
         return
     stats = ip_stats(ips)
-    full_message = ("%s " + message) % stats
+    full_message = ("%s   " + message) % stats
     print(full_message, file=sys.stderr)
 
 
@@ -266,7 +266,7 @@ def main():
     ]
 
     print(
-        "\x1b[7m  IPv4   IPv6  Onion Pass                                               \x1b[0m",
+        "\x1b[7m  IPv4   IPv6  Onion   Pass                                               \x1b[0m",
         file=sys.stderr,
     )
     ips = [parseline(line) for line in sys.stdin]
