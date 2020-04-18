@@ -17,6 +17,13 @@ MAX_SEEDS_PER_ASN = 2
 
 MIN_BLOCKS = 337600
 
+# Required 30-day uptime percentages
+REQ_UPTIME = {
+    "ipv4": 50,
+    "ipv6": 50,
+    "onion": 10,
+}
+
 # These are hosts that have been observed to be behaving strangely (e.g.
 # aggressively connecting to every node).
 with open("suspicious_hosts.txt", mode="r", encoding="utf-8") as f:
@@ -156,13 +163,8 @@ def require_service_bit_1(ips):
 
 
 def require_min_uptime(ips):
-    """ Require at least 50% 30-day uptime for clearnet, 10% for onion. """
-    req_uptime = {
-        "ipv4": 50,
-        "ipv6": 50,
-        "onion": 10,
-    }
-    return [ip for ip in ips if ip["uptime"] > req_uptime[ip["net"]]]
+    """ Required 30-day uptime depending on network type. """
+    return [ip for ip in ips if ip["uptime"] > REQ_UPTIME[ip["net"]]]
 
 
 def require_known_recent_user_agent(ips):
